@@ -1,20 +1,6 @@
-import sys
-from pathlib import Path
-
+import os
+import requests
 import streamlit as st
-
-
-# =========================================================
-# PROJECT PATH
-# =========================================================
-
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-
-from backend.services.pipeline import verify_content
 
 
 # =========================================================
@@ -30,19 +16,87 @@ st.set_page_config(
 
 
 # =========================================================
+# BACKEND CONFIGURATION
+# =========================================================
+
+BACKEND_URL = os.getenv(
+    "BACKEND_URL",
+    "http://127.0.0.1:8000"
+).rstrip("/")
+
+
+# =========================================================
+# SESSION STATE
+# =========================================================
+
+if "verification_result" not in st.session_state:
+    st.session_state.verification_result = None
+
+if "verification_type" not in st.session_state:
+    st.session_state.verification_type = None
+
+
+# =========================================================
+# CUSTOM CSS
+# =========================================================
+
+st.markdown(
+    """
+    <style>
+        .main {
+            padding-top: 1rem;
+        }
+
+        .truthlens-header {
+            padding: 1.5rem;
+            border-radius: 15px;
+            margin-bottom: 1.5rem;
+            border: 1px solid rgba(128,128,128,0.25);
+        }
+
+        .verdict-box {
+            padding: 1rem;
+            border-radius: 12px;
+            border: 1px solid rgba(128,128,128,0.25);
+            margin-bottom: 1rem;
+        }
+
+        .claim-box {
+            padding: 1rem;
+            border-radius: 12px;
+            border: 1px solid rgba(128,128,128,0.20);
+            margin-bottom: 1rem;
+        }
+
+        .evidence-box {
+            padding: 0.8rem;
+            border-radius: 10px;
+            border: 1px solid rgba(128,128,128,0.15);
+            margin-top: 0.5rem;
+        }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+
+# =========================================================
 # HEADER
 # =========================================================
 
-st.title("🔎 TruthLens AI")
-
 st.markdown(
-    "### AI-Powered Misinformation & Fact Verification System"
-)
-
-st.write(
-    "Analyze claims, search external evidence, rank sources, "
-    "and evaluate whether claims are supported, contradicted, "
-    "misleading, or unverified."
+    """
+    <div class="truthlens-header">
+        <h1>🔎 TruthLens AI</h1>
+        <h3>AI-Powered Misinformation & Fact Verification System</h3>
+        <p>
+            Analyze claims, search external evidence, rank sources,
+            and evaluate whether claims are supported, contradicted,
+            misleading, or unverified.
+        </p>
+    </div>
+    """,
+    unsafe_allow_html=True
 )
 
 
@@ -58,32 +112,78 @@ with st.sidebar:
         """
         TruthLens AI is an evidence-based misinformation
         verification prototype.
-
-        It follows this pipeline:
         """
     )
 
-    st.write("1. 📝 Claim Extraction")
-    st.write("2. 🌐 Web Search")
-    st.write("3. ⭐ Source Ranking")
-    st.write("4. 🤖 AI Verification")
-    st.write("5. 📊 Final Verdict")
+    st.markdown("### Verification Pipeline")
+
+    st.write("1. 📝 Extract factual claims")
+    st.write("2. 🌐 Search the web for evidence")
+    st.write("3. 🏆 Rank source credibility")
+    st.write("4. 🤖 Verify claims using Gemini")
+    st.write("5. 📊 Generate an overall verdict")
 
     st.divider()
 
-    st.subheader("📌 Verdicts")
+    st.caption("Backend")
+    st.code(BACKEND_URL)
 
-    st.write("✅ SUPPORTS")
-    st.write("❌ CONTRADICTS")
-    st.write("⚠️ MISLEADING")
-    st.write("❓ UNVERIFIED")
+    if st.button("🔄 Clear Results", use_container_width=True):
+        st.session_state.verification_result = None
+        st.session_state.verification_type = None
+        st.rerun()
 
-    st.divider()
 
-    st.caption(
-        "TruthLens AI is a prototype. Always review "
-        "the cited sources before making high-stakes decisions."
+# =========================================================
+# BACKEND HEALTH CHECK
+# =========================================================
+
+with st.sidebar:
+
+    try:
+        health_response = requests.get(
+            f"{BACKEND_URL}/health",
+            timeout=10
+        )
+
+        if health_response.status_code == 200:
+            st.success("🟢 Backend Online")
+        else:
+            st.warning("🟡 Backend Responding")
+    except requests.RequestException:
+        st.error("🔴 Backend Offline")
+
+
+# =========================================================
+# VERIFICATION FUNCTIONS
+# =========================================================
+
+def verify_text(text: str):
+    """Send text to the FastAPI backend."""
+
+    response = requests.post(
+        f"{BACKEND_URL}/api/v1/verify",
+        json={
+            "text": text
+        },
+        timeout=180
     )
+
+    return response
+
+
+def verify_url(url: str):
+    """Send URL to the FastAPI backend."""
+
+    response = requests.post(
+        f"{BACKEND_URL}/api/v1/verify",
+        json={
+            "url": url
+        },
+        timeout=180
+    )
+
+    return response
 
 
 # =========================================================
@@ -93,7 +193,7 @@ with st.sidebar:
 text_tab, url_tab = st.tabs(
     [
         "📝 Verify Text",
-        "🌐 Verify URL"
+        "🌐 Verify Article URL"
     ]
 )
 
@@ -104,68 +204,95 @@ text_tab, url_tab = st.tabs(
 
 with text_tab:
 
-    st.subheader("Enter a claim or article")
+    st.subheader("Verify Text")
 
     text_input = st.text_area(
-        "Text",
-        height=200,
+        "Enter a claim or text to analyze",
+        height=220,
         placeholder=(
             "Example:\n\n"
-            "The Earth is flat."
-        ),
-        label_visibility="collapsed"
+            "The Earth is flat and NASA has admitted that "
+            "the planet is not spherical."
+        )
     )
 
-    verify_text = st.button(
-        "🔎 Verify Text",
+    verify_text_button = st.button(
+        "🔍 Verify Text",
         type="primary",
         use_container_width=True
     )
 
-    if verify_text:
+    if verify_text_button:
 
         if not text_input.strip():
 
             st.warning(
-                "Please enter a claim or article."
+                "Please enter some text before starting verification."
             )
 
         else:
 
             with st.spinner(
-                "🔍 Extracting claims, searching the web, "
-                "and verifying evidence..."
+                "Analyzing claims, searching evidence, and verifying..."
             ):
 
                 try:
 
-                    result = verify_content(
-                        text=text_input.strip()
+                    response = verify_text(
+                        text_input.strip()
                     )
 
-                    st.session_state[
-                        "verification_result"
-                    ] = result
+                    if response.status_code == 200:
+
+                        st.session_state.verification_result = (
+                            response.json()
+                        )
+
+                        st.session_state.verification_type = "text"
+
+                        st.success(
+                            "Verification completed successfully."
+                        )
+
+                    elif response.status_code == 429:
+
+                        st.warning(
+                            "Gemini API quota is currently exhausted. "
+                            "Please try again after the quota resets."
+                        )
+
+                    else:
+
+                        try:
+                            detail = response.json().get(
+                                "detail",
+                                response.text
+                            )
+                        except Exception:
+                            detail = response.text
+
+                        st.error(
+                            f"Verification failed: {detail}"
+                        )
+
+                except requests.Timeout:
+
+                    st.error(
+                        "The verification request timed out. "
+                        "The backend may still be processing the request. "
+                        "Please try again."
+                    )
+
+                except requests.RequestException as e:
+
+                    st.error(
+                        f"Could not connect to the backend: {e}"
+                    )
 
                 except Exception as e:
 
-                    error_message = str(e).lower()
-
-                    if (
-                      "429" in error_message
-                      or "quota" in error_message
-                      or "resource_exhausted" in error_message
-                    ):
-
-                      st.warning(
-                        "⚠️ Gemini API quota is currently exhausted. "
-                        "Please try again after the quota resets. "
-                        "The application itself is working correctly."
-                      )
-
-                    else:
-                      st.error(
-                      f"Verification failed: {e}"
+                    st.error(
+                        f"Unexpected error: {e}"
                     )
 
 
@@ -175,20 +302,20 @@ with text_tab:
 
 with url_tab:
 
-    st.subheader("Enter an article URL")
+    st.subheader("Verify an Article URL")
 
     url_input = st.text_input(
         "Article URL",
         placeholder="https://example.com/article"
     )
 
-    verify_url = st.button(
+    verify_url_button = st.button(
         "🌐 Verify Article",
         type="primary",
         use_container_width=True
     )
 
-    if verify_url:
+    if verify_url_button:
 
         if not url_input.strip():
 
@@ -199,40 +326,66 @@ with url_tab:
         else:
 
             with st.spinner(
-                "🌐 Downloading article, extracting claims, "
-                "and verifying evidence..."
+                "Extracting article, searching evidence, and verifying..."
             ):
 
                 try:
 
-                    result = verify_content(
-                        url=url_input.strip()
+                    response = verify_url(
+                        url_input.strip()
                     )
 
-                    st.session_state[
-                        "verification_result"
-                    ] = result
+                    if response.status_code == 200:
+
+                        st.session_state.verification_result = (
+                            response.json()
+                        )
+
+                        st.session_state.verification_type = "url"
+
+                        st.success(
+                            "Article verification completed successfully."
+                        )
+
+                    elif response.status_code == 429:
+
+                        st.warning(
+                            "Gemini API quota is currently exhausted. "
+                            "Please try again after the quota resets."
+                        )
+
+                    else:
+
+                        try:
+                            detail = response.json().get(
+                                "detail",
+                                response.text
+                            )
+                        except Exception:
+                            detail = response.text
+
+                        st.error(
+                            f"URL verification failed: {detail}"
+                        )
+
+                except requests.Timeout:
+
+                    st.error(
+                        "The verification request timed out. "
+                        "Please try again."
+                    )
+
+                except requests.RequestException as e:
+
+                    st.error(
+                        f"Could not connect to the backend: {e}"
+                    )
 
                 except Exception as e:
 
-                   error_message = str(e).lower()
-
-                   if (
-                      "429" in error_message
-                      or "quota" in error_message
-                      or "resource_exhausted" in error_message
-                   ):
-
-                      st.warning(
-                        "⚠️ Gemini API quota is currently exhausted. "
-                        "Please try again after the quota resets."
-                      )
-
-                   else:
-
-                      st.error(
-                      f"URL verification failed: {e}"
-                   )
+                    st.error(
+                        f"Unexpected error: {e}"
+                    )
 
 
 # =========================================================
@@ -254,10 +407,9 @@ if result:
 
     st.header("📊 Verification Result")
 
-
-    # =====================================================
+    # -----------------------------------------------------
     # OVERALL RESULT
-    # =====================================================
+    # -----------------------------------------------------
 
     overall_verdict = result.get(
         "overall_verdict",
@@ -276,10 +428,9 @@ if result:
         []
     )
 
-
-    # =====================================================
-    # VERDICT CONFIGURATION
-    # =====================================================
+    # -----------------------------------------------------
+    # OVERALL VERDICT CONFIGURATION
+    # -----------------------------------------------------
 
     verdict_config = {
 
@@ -304,8 +455,7 @@ if result:
         }
     }
 
-
-    verdict_info = verdict_config.get(
+    config = verdict_config.get(
         overall_verdict,
         {
             "emoji": "❓",
@@ -313,22 +463,18 @@ if result:
         }
     )
 
-
-    # =====================================================
-    # KPI CARDS
-    # =====================================================
+    # -----------------------------------------------------
+    # OVERALL RESULT CARD
+    # -----------------------------------------------------
 
     col1, col2, col3 = st.columns(3)
-
 
     with col1:
 
         st.metric(
             "Overall Verdict",
-            f"{verdict_info['emoji']} "
-            f"{verdict_info['label']}"
+            f"{config['emoji']} {config['label']}"
         )
-
 
     with col2:
 
@@ -337,7 +483,6 @@ if result:
             f"{overall_confidence * 100:.1f}%"
         )
 
-
     with col3:
 
         st.metric(
@@ -345,58 +490,21 @@ if result:
             len(claims)
         )
 
-
-    # =====================================================
-    # OVERALL CONFIDENCE
-    # =====================================================
-
-    st.subheader("🎯 Overall Confidence")
-
     st.progress(
-        max(
-            0.0,
-            min(
-                1.0,
-                overall_confidence
-            )
-        )
+        min(max(overall_confidence, 0.0), 1.0)
     )
 
-    st.caption(
-        f"The system has {overall_confidence * 100:.1f}% "
-        "confidence in the overall result."
-    )
-
-
-    # =====================================================
-    # ANALYZED CONTENT
-    # =====================================================
-
-    with st.expander(
-        "📄 View Analyzed Content"
-    ):
-
-        st.write(
-            result.get(
-                "input_text",
-                ""
-            )
-        )
-
-
-    # =====================================================
+    # -----------------------------------------------------
     # CLAIMS
-    # =====================================================
+    # -----------------------------------------------------
 
-    st.header("🔍 Claims Detected")
-
+    st.subheader("📝 Claims Detected")
 
     if not claims:
 
         st.info(
             "No verifiable factual claims were detected."
         )
-
 
     else:
 
@@ -406,36 +514,86 @@ if result:
         ):
 
             # -------------------------------------------------
-            # CLAIM RESULT
+            # SUPPORT BOTH DICT AND OBJECT RESPONSES
             # -------------------------------------------------
 
-            claim = claim_result.claim
+            if isinstance(claim_result, dict):
 
-            verdict = claim_result.verdict
+                claim = claim_result.get(
+                    "claim",
+                    "Unknown claim"
+                )
 
-            confidence = float(
-                claim_result.confidence
-            )
+                verdict = claim_result.get(
+                    "verdict",
+                    "UNVERIFIED"
+                )
 
-            explanation = claim_result.explanation
+                confidence = float(
+                    claim_result.get(
+                        "confidence",
+                        0.0
+                    )
+                )
 
-            evidence = claim_result.evidence
+                explanation = claim_result.get(
+                    "explanation",
+                    ""
+                )
 
+                evidence = claim_result.get(
+                    "evidence",
+                    []
+                )
+
+            else:
+
+                claim = getattr(
+                    claim_result,
+                    "claim",
+                    "Unknown claim"
+                )
+
+                verdict = getattr(
+                    claim_result,
+                    "verdict",
+                    "UNVERIFIED"
+                )
+
+                confidence = float(
+                    getattr(
+                        claim_result,
+                        "confidence",
+                        0.0
+                    )
+                )
+
+                explanation = getattr(
+                    claim_result,
+                    "explanation",
+                    ""
+                )
+
+                evidence = getattr(
+                    claim_result,
+                    "evidence",
+                    []
+                )
 
             # -------------------------------------------------
-            # CLAIM STATUS
+            # CLAIM VERDICT CONFIG
             # -------------------------------------------------
 
             claim_config = {
 
                 "SUPPORTS": {
                     "emoji": "✅",
-                    "label": "SUPPORTS"
+                    "label": "SUPPORTED"
                 },
 
                 "CONTRADICTS": {
                     "emoji": "❌",
-                    "label": "CONTRADICTS"
+                    "label": "CONTRADICTED"
                 },
 
                 "MISLEADING": {
@@ -449,8 +607,7 @@ if result:
                 }
             }
 
-
-            claim_info = claim_config.get(
+            claim_status = claim_config.get(
                 verdict,
                 {
                     "emoji": "❓",
@@ -458,147 +615,181 @@ if result:
                 }
             )
 
-
             # -------------------------------------------------
-            # CLAIM HEADER
-            # -------------------------------------------------
-
-            st.subheader(
-                f"Claim {index}"
-            )
-
-            st.markdown(
-                f"### {claim_info['emoji']} {claim}"
-            )
-
-
-            # -------------------------------------------------
-            # CLAIM METRICS
+            # CLAIM DISPLAY
             # -------------------------------------------------
 
-            claim_col1, claim_col2 = st.columns(2)
+            with st.expander(
+                f"Claim {index}: {claim_status['emoji']} "
+                f"{claim_status['label']}",
+                expanded=(index == 1)
+            ):
 
-
-            with claim_col1:
-
-                st.metric(
-                    "Verdict",
-                    claim_info["label"]
+                st.markdown(
+                    f"**Claim:** {claim}"
                 )
 
-
-            with claim_col2:
-
-                st.metric(
-                    "Confidence",
-                    f"{confidence * 100:.1f}%"
+                st.markdown(
+                    f"**Verdict:** "
+                    f"{claim_status['emoji']} "
+                    f"{claim_status['label']}"
                 )
 
-
-            # -------------------------------------------------
-            # CLAIM CONFIDENCE
-            # -------------------------------------------------
-
-            st.progress(
-                max(
-                    0.0,
-                    min(
-                        1.0,
-                        confidence
-                    )
-                )
-            )
-
-
-            # -------------------------------------------------
-            # EXPLANATION
-            # -------------------------------------------------
-
-            st.markdown(
-                "#### 🧠 Explanation"
-            )
-
-            st.write(
-                explanation
-            )
-
-
-            # -------------------------------------------------
-            # EVIDENCE
-            # -------------------------------------------------
-
-            st.markdown(
-                "#### 📚 Evidence Sources"
-            )
-
-
-            if not evidence:
-
-                st.info(
-                    "No external evidence was available "
-                    "for this claim."
+                st.markdown(
+                    f"**Confidence:** {confidence * 100:.1f}%"
                 )
 
+                st.progress(
+                    min(max(confidence, 0.0), 1.0)
+                )
 
-            else:
+                if explanation:
 
-                for source_index, source in enumerate(
-                    evidence,
-                    start=1
-                ):
-
-                    title = source.title
-
-                    url = source.url
-
-                    snippet = source.snippet
-
-                    domain = source.source_domain
-
-                    source_score = float(
-                        source.source_score
+                    st.markdown(
+                        f"**Explanation:** {explanation}"
                     )
 
+                # -------------------------------------------------
+                # EVIDENCE
+                # -------------------------------------------------
 
-                    # -----------------------------------------
-                    # SOURCE EXPANDER
-                    # -----------------------------------------
+                st.markdown("### 🔎 Evidence")
 
-                    with st.expander(
-                        f"🌐 Source {source_index}: "
-                        f"{domain}"
+                if not evidence:
+
+                    st.info(
+                        "No external evidence was returned."
+                    )
+
+                else:
+
+                    for evidence_index, item in enumerate(
+                        evidence,
+                        start=1
                     ):
 
-                        st.markdown(
-                            f"**{title}**"
-                        )
+                        if isinstance(item, dict):
 
-                        st.write(
-                            snippet
-                        )
-
-                        st.write(
-                            f"**Source Credibility:** "
-                            f"{source_score * 100:.0f}%"
-                        )
-
-
-                        if url:
-
-                            st.link_button(
-                                "🔗 View Source",
-                                url,
-                                use_container_width=True
+                            title = item.get(
+                                "title",
+                                "Untitled source"
                             )
 
+                            url = item.get(
+                                "url",
+                                ""
+                            )
 
-            # -------------------------------------------------
-            # CLAIM DIVIDER
-            # -------------------------------------------------
+                            source = item.get(
+                                "source",
+                                item.get(
+                                    "domain",
+                                    "Unknown source"
+                                )
+                            )
 
-            if index < len(claims):
+                            snippet = item.get(
+                                "snippet",
+                                item.get(
+                                    "text",
+                                    ""
+                                )
+                            )
 
-                st.divider()
+                            credibility = item.get(
+                                "credibility",
+                                item.get(
+                                    "score",
+                                    None
+                                )
+                            )
+
+                        else:
+
+                            title = getattr(
+                                item,
+                                "title",
+                                "Untitled source"
+                            )
+
+                            url = getattr(
+                                item,
+                                "url",
+                                ""
+                            )
+
+                            source = getattr(
+                                item,
+                                "source",
+                                getattr(
+                                    item,
+                                    "domain",
+                                    "Unknown source"
+                                )
+                            )
+
+                            snippet = getattr(
+                                item,
+                                "snippet",
+                                getattr(
+                                    item,
+                                    "text",
+                                    ""
+                                )
+                            )
+
+                            credibility = getattr(
+                                item,
+                                "credibility",
+                                getattr(
+                                    item,
+                                    "score",
+                                    None
+                                )
+                            )
+
+                        with st.container():
+
+                            st.markdown(
+                                f"**{evidence_index}. {title}**"
+                            )
+
+                            st.write(
+                                f"Source: {source}"
+                            )
+
+                            if credibility is not None:
+
+                                try:
+
+                                    credibility_value = float(
+                                        credibility
+                                    )
+
+                                    st.write(
+                                        "Credibility: "
+                                        f"{credibility_value * 100:.1f}%"
+                                    )
+
+                                except Exception:
+
+                                    st.write(
+                                        f"Credibility: {credibility}"
+                                    )
+
+                            if snippet:
+
+                                st.write(
+                                    snippet
+                                )
+
+                            if url:
+
+                                st.markdown(
+                                    f"[🔗 Open Source]({url})"
+                                )
+
+                            st.divider()
 
 
 # =========================================================
@@ -608,7 +799,6 @@ if result:
 st.divider()
 
 st.caption(
-    "TruthLens AI • AI-powered misinformation detection "
-    "and evidence verification"
+    "TruthLens AI • Evidence-based misinformation verification "
+    "using web search, source credibility ranking, and Google Gemini."
 )
-
