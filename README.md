@@ -1408,6 +1408,14 @@ https://github.com/VinayTodkar/Truthlens-ai
 
 
 
+Deployed Project:
+
+
+
+https://truthlens-ai-1-e7ic.onrender.com/
+
+
+
 \---
 
 
